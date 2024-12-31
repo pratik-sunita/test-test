@@ -1,6 +1,10 @@
+import streamlit as st
 import yfinance as yf
 import pandas as pd
 import ta
+
+st.title("Stock Data Analysis")
+st.write("Fetching stock data...")
 
 
 # Function to fetch and analyze stock data
