@@ -42,9 +42,9 @@ def analyze_stock(data):
     sma_200_value = last_row['SMA_200']
 
     # Decision based on RSI, SMA, and MACD
-    if rsi_value < 30 and sma_50_value < sma_200_value:
+    if (rsi_value < 30) & (sma_50_value < sma_200_value):
         return "Golden Opportunity: Buy and hold!"
-    elif rsi_value > 70 or sma_50_value > sma_200_value:
+    elif (rsi_value > 70) | (sma_50_value > sma_200_value):
         return "Immediate Sale: Consider selling."
     else:
         return "Hold for now: Long-term potential."
