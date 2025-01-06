@@ -1,5 +1,7 @@
+streamlit
 yfinance
 pandas
-ta
-streamlit
 matplotlib
+ta
+textblob
+requests
