@@ -37,7 +37,7 @@ def analyze_sentiment(text):
     return analysis.sentiment.polarity
 
 
-def analyze_stock(data):
+def analyze_stock(data, avg_sentiment):
     """Analyze stock using technical indicators and provide recommendations."""
     # Ensure close prices are 1-dimensional
     close_prices = data['Close'].squeeze()
@@ -58,12 +58,12 @@ def analyze_stock(data):
     sma_200 = SMAIndicator(close=close_prices, window=200)
     data['SMA_200'] = sma_200.sma_indicator()
 
-    # Volume Weighted Average Price (VWAP) - Fix to ensure it's 1D
+    # Volume Weighted Average Price (VWAP)
     vwap = VolumeWeightedAveragePrice(
-        high=data['High'].squeeze(),  # Ensure it's 1D
-        low=data['Low'].squeeze(),    # Ensure it's 1D
-        close=close_prices.squeeze(), # Ensure it's 1D
-        volume=data['Volume'].squeeze()  # Ensure it's 1D
+        high=data['High'].squeeze(),
+        low=data['Low'].squeeze(),
+        close=data['Close'].squeeze(),
+        volume=data['Volume'].squeeze()
     )
     data['VWAP'] = vwap.volume_weighted_average_price()
 
@@ -85,8 +85,11 @@ def analyze_stock(data):
     if isinstance(close_value, pd.Series):
         close_value = close_value.iloc[0]
 
-    # Recommendation logic
-    if rsi_value is not None and bb_low_value is not None and close_value is not None and rsi_value < 20 and close_value <= bb_low_value:
+    # Recommendation logic based on sentiment and indicators
+    if avg_sentiment < 0:  # Negative market sentiment
+        recommendation = "Consider Selling: Negative sentiment in the market."
+        reason = f"Market sentiment polarity is {avg_sentiment:.2f}."
+    elif rsi_value is not None and bb_low_value is not None and close_value is not None and rsi_value < 20 and close_value <= bb_low_value:
         recommendation = "Golden Opportunity: Buy and hold!"
         reason = f"RSI is {rsi_value} (oversold) and price is near lower Bollinger Band ({bb_low_value})."
     elif rsi_value is not None and bb_high_value is not None and close_value is not None and rsi_value > 80 and close_value >= bb_high_value:
@@ -137,12 +140,6 @@ def main():
     if ticker:
         data = fetch_stock_data(ticker)
         if data is not None:
-            recommendation, reason = analyze_stock(data)
-            st.subheader("Recommendation")
-            st.write(recommendation)
-            st.subheader("**Why**")
-            st.write(reason)
-
             news_articles = fetch_news(ticker)
             sentiments = [
                 analyze_sentiment((article.get('title') or '') + '. ' + (article.get('description') or ''))
@@ -150,16 +147,19 @@ def main():
             ]
             avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
 
+            recommendation, reason = analyze_stock(data, avg_sentiment)
+            st.subheader("Recommendation")
+            st.write(recommendation)
+            st.subheader("**Why**")
+            st.write(reason)
+
             if avg_sentiment != 0:
                 st.subheader("**Market Sentiment**")
                 st.write(f"Average Sentiment Polarity: {avg_sentiment:.2f}")
 
             plot_data(data, ticker)
 
-            st.markdown(""" 
-                **Disclaimer:** This app provides analysis based on technical and sentiment indicators. It is not financial advice.
-            """)
-
+            st.markdown("""**Disclaimer:** This app provides analysis based on technical and sentiment indicators. It is not financial advice.""")
 
 if __name__ == "__main__":
     main()
