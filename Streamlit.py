@@ -3,10 +3,16 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 from ta.momentum import RSIIndicator
-from ta.trend import MACD
+from ta.volatility import BollingerBands
+from ta.trend import SMAIndicator
+from ta.volume import VolumeWeightedAveragePrice
+from textblob import TextBlob
+import requests
 
-# Function to fetch historical stock data
+
+@st.cache_data
 def fetch_stock_data(ticker, period='1y', interval='1d'):
+    """Fetch historical stock data using yfinance."""
     st.write(f"Fetching data for {ticker}...")
     data = yf.download(ticker, period=period, interval=interval)
     if data.empty:
@@ -14,69 +20,106 @@ def fetch_stock_data(ticker, period='1y', interval='1d'):
         return None
     return data
 
-# Function to analyze the stock data
+
+@st.cache_data
+def fetch_news(ticker):
+    """Fetch news articles related to the stock ticker."""
+    api_key = 'f25ff0c2389e4546ad2bbc78becca545'
+    url = f'https://newsapi.org/v2/everything?q={ticker}&apiKey={api_key}'
+    response = requests.get(url)
+    articles = response.json().get('articles', [])
+    return articles
+
+
+def analyze_sentiment(text):
+    """Analyze sentiment of a given text."""
+    analysis = TextBlob(text)
+    return analysis.sentiment.polarity
+
+
 def analyze_stock(data):
-    close_prices = data['Close'].squeeze()  # Flatten to 1D if needed
+    """Analyze stock using technical indicators and provide recommendations."""
+    # Ensure close prices are 1-dimensional
+    close_prices = data['Close'].squeeze()
 
-    data['SMA_50'] = close_prices.rolling(window=50).mean()
-    data['SMA_200'] = close_prices.rolling(window=200).mean()
+    # Bollinger Bands
+    bollinger = BollingerBands(close=close_prices)
+    data['BB_High'] = bollinger.bollinger_hband()
+    data['BB_Low'] = bollinger.bollinger_lband()
 
+    # RSI Indicator
     rsi = RSIIndicator(close=close_prices)
     data['RSI'] = rsi.rsi()
 
-    macd = MACD(close=close_prices)
-    data['MACD'] = macd.macd()
-    data['Signal_Line'] = macd.macd_signal()
+    # 50-day and 200-day Simple Moving Average (SMA)
+    sma_50 = SMAIndicator(close=close_prices, window=50)
+    data['SMA_50'] = sma_50.sma_indicator()
 
+    sma_200 = SMAIndicator(close=close_prices, window=200)
+    data['SMA_200'] = sma_200.sma_indicator()
+
+    # Volume Weighted Average Price (VWAP) - Fix to ensure it's 1D
+    vwap = VolumeWeightedAveragePrice(
+        high=data['High'].squeeze(),  # Ensure it's 1D
+        low=data['Low'].squeeze(),    # Ensure it's 1D
+        close=close_prices.squeeze(), # Ensure it's 1D
+        volume=data['Volume'].squeeze()  # Ensure it's 1D
+    )
+    data['VWAP'] = vwap.volume_weighted_average_price()
+
+    # Get the last row of data
     last_row = data.iloc[-1]
-    rsi_value = round(last_row['RSI'], 2)
-    sma_50_value = round(last_row['SMA_50'], 2)
-    sma_200_value = round(last_row['SMA_200'], 2)
-    macd_value = round(last_row['MACD'], 2)
-    signal_line_value = round(last_row['Signal_Line'], 2)
+
+    # Extract scalar values with .item() if applicable
+    rsi_value = last_row['RSI'] if pd.notnull(last_row['RSI']).any() else None
+    bb_high_value = last_row['BB_High'] if pd.notnull(last_row['BB_High']).any() else None
+    bb_low_value = last_row['BB_Low'] if pd.notnull(last_row['BB_Low']).any() else None
+    close_value = last_row['Close'] if pd.notnull(last_row['Close']).any() else None
 
     if isinstance(rsi_value, pd.Series):
-        rsi_value = rsi_value.item()
-    if isinstance(sma_50_value, pd.Series):
-        sma_50_value = sma_50_value.item()
-    if isinstance(sma_200_value, pd.Series):
-        sma_200_value = sma_200_value.item()
-    if isinstance(macd_value, pd.Series):
-        macd_value = macd_value.item()
-    if isinstance(signal_line_value, pd.Series):
-        signal_line_value = signal_line_value.item()
+        rsi_value = rsi_value.iloc[0]
+    if isinstance(bb_high_value, pd.Series):
+        bb_high_value = bb_high_value.iloc[0]
+    if isinstance(bb_low_value, pd.Series):
+        bb_low_value = bb_low_value.iloc[0]
+    if isinstance(close_value, pd.Series):
+        close_value = close_value.iloc[0]
 
-    if rsi_value < 30 and sma_50_value < sma_200_value:
+    # Recommendation logic
+    if rsi_value is not None and bb_low_value is not None and close_value is not None and rsi_value < 20 and close_value <= bb_low_value:
         recommendation = "Golden Opportunity: Buy and hold!"
-        reason = (f"The RSI value is {rsi_value} (below 30), indicating the stock is oversold. "
-                  f"Additionally, the 50-day SMA ({sma_50_value}) is below the 200-day SMA ({sma_200_value}), suggesting "
-                  "a potential buying opportunity. This combination often signifies that the stock is undervalued and might "
-                  "be poised for a rebound as investors recognize the discount price.")
-    elif rsi_value > 70:
+        reason = f"RSI is {rsi_value} (oversold) and price is near lower Bollinger Band ({bb_low_value})."
+    elif rsi_value is not None and bb_high_value is not None and close_value is not None and rsi_value > 80 and close_value >= bb_high_value:
         recommendation = "Immediate Sale: Consider selling."
-        reason = (f"The RSI value is {rsi_value} (above 70), indicating the stock is overbought. "
-                  "This suggests a possible selling opportunity as the stock price may be inflated due to excessive buying, "
-                  "leading to a potential price correction in the near term.")
-    elif sma_50_value > sma_200_value:
-        recommendation = "Immediate Sale: Consider selling."
-        reason = (f"The 50-day SMA ({sma_50_value}) is above the 200-day SMA ({sma_200_value}), indicating a "
-                  "possible selling opportunity. This crossover can signal that the stock price has been trending upward for "
-                  "an extended period and might be due for a correction or consolidation phase.")
+        reason = f"RSI is {rsi_value} (overbought) and price is near upper Bollinger Band ({bb_high_value})."
+    elif rsi_value is not None and rsi_value < 30:
+        recommendation = "Consider Buying: RSI suggests oversold."
+        reason = f"RSI is {rsi_value} (oversold)."
+    elif rsi_value is not None and rsi_value > 70:
+        recommendation = "Consider Selling: RSI suggests overbought."
+        reason = f"RSI is {rsi_value} (overbought)."
+    elif close_value is not None and close_value <= bb_low_value:
+        recommendation = "Consider Buying: Price near lower Bollinger Band."
+        reason = f"Price is near lower Bollinger Band ({bb_low_value})."
+    elif close_value is not None and close_value >= bb_high_value:
+        recommendation = "Consider Selling: Price near upper Bollinger Band."
+        reason = f"Price is near upper Bollinger Band ({bb_high_value})."
     else:
-        recommendation = "Hold for now: Long-term potential."
-        reason = (f"The RSI value is {rsi_value}, indicating neither an oversold nor overbought condition. "
-                  f"The 50-day SMA ({sma_50_value}) is neither significantly above nor below the 200-day SMA ({sma_200_value}). "
-                  "This suggests maintaining your current position could be prudent as there are no immediate signals of "
-                  "extreme market conditions.")
+        recommendation = "Hold for now: Monitoring situation."
+        reason = "Indicators do not show strong buy or sell signals."
 
     return recommendation, reason
 
-# Function to plot the stock data
+
 def plot_data(data, ticker):
+    """Plot stock data using Matplotlib."""
     plt.figure(figsize=(14, 7))
     plt.plot(data['Close'], label='Close Price', color='blue')
     plt.plot(data['SMA_50'], label='50-Day SMA', color='green')
     plt.plot(data['SMA_200'], label='200-Day SMA', color='red')
+    plt.plot(data['BB_High'], label='Bollinger Band High', color='magenta')
+    plt.plot(data['BB_Low'], label='Bollinger Band Low', color='cyan')
+    plt.plot(data['VWAP'], label='VWAP', color='orange')
     plt.title(f"{ticker} Stock Analysis")
     plt.xlabel("Date")
     plt.ylabel("Price")
@@ -84,8 +127,9 @@ def plot_data(data, ticker):
     plt.grid()
     st.pyplot(plt)
 
-# Streamlit app main function
+
 def main():
+    """Streamlit app main function."""
     st.title("Stock Analysis App")
     st.write("Enter a stock ticker to analyze its technical indicators and get a recommendation.")
 
@@ -98,12 +142,24 @@ def main():
             st.write(recommendation)
             st.subheader("**Why**")
             st.write(reason)
+
+            news_articles = fetch_news(ticker)
+            sentiments = [
+                analyze_sentiment((article.get('title') or '') + '. ' + (article.get('description') or ''))
+                for article in news_articles
+            ]
+            avg_sentiment = sum(sentiments) / len(sentiments) if sentiments else 0
+
+            if avg_sentiment != 0:
+                st.subheader("**Market Sentiment**")
+                st.write(f"Average Sentiment Polarity: {avg_sentiment:.2f}")
+
             plot_data(data, ticker)
 
-    # Add disclaimer at the bottom
-    st.markdown("""
-    **Disclaimer:** The recommendations provided in this application are based on technical analysis using the Simple Moving Average (SMA), Relative Strength Index (RSI), and Moving Average Convergence Divergence (MACD) indicators. These suggestions are for informational purposes only and should not be considered as financial advice. The data and analyses presented are derived from historical stock prices and do not guarantee future performance. Users should conduct their own research and consult with a licensed financial advisor before making any investment decisions. The creator of this application is not responsible for any financial losses or gains incurred as a result of using this tool.
-    """)
+            st.markdown(""" 
+                **Disclaimer:** This app provides analysis based on technical and sentiment indicators. It is not financial advice.
+            """)
+
 
 if __name__ == "__main__":
     main()
